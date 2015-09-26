@@ -30,21 +30,30 @@ class MessageRem(client: TwilioRestClient, emailClient: MandrillApi, resmiProvid
     optEntity match {
       case Some(json) =>
         val to = json.get("to").getAsString
-        getRoute(to) match {
-          case Some(route) =>
-            val msj = routedMessage(to, json.get("message").getAsString)
-            route.get("type").getAsString match {
-              case "email" => sendEmailMessage(to, route.get("value").getAsString, msj)
-              case "phone" => sendSMSMessage(route.get("value").getAsString,msj )
-              case t: String => throw new IllegalArgumentException(s"Unsupported Route type: $t")
+        val response = resmiProvider(GET).resource("sosms:RegisterPhoneNumber", new ResourceId(to),
+          RequestParameters.emptyParameters(), Optional.empty())
+        response.getStatus match {
+          case 200 =>
+            if(response.getEntity.asInstanceOf[JsonObject].get("status").getAsString == "OK") {
+              getRoute(to) match {
+                case Some(route) =>
+                  val message = routedMessage(to, json.get("message").getAsString)
+                  route.get("type").getAsString match {
+                    case "email" => sendEmailMessage(to, route.get("value").getAsString, message)
+                    case "phone" => sendSMSMessage(route.get("value").getAsString,message )
+                    case t: String => throw new IllegalArgumentException(s"Unsupported Route type: $t")
+                  }
+                case None =>
+                  sendSMSMessage(to, json.get("message").getAsString)
+              }
+              Response.accepted().build()
+            } else {
+              Response.status(403).build()
             }
-          case None =>
-            sendSMSMessage(to, json.get("message").getAsString)
+          case 404 => Response.status(404).build()
+          case _ => Response.status(401).build()
         }
-        Response.accepted().build()
-
-
-      case _ => Response.status(400).entity("Empty message not allowed").build()
+      case _ => Response.status(400).build()
     }
   }
 
@@ -52,7 +61,7 @@ class MessageRem(client: TwilioRestClient, emailClient: MandrillApi, resmiProvid
 
 
   def getRoute(to:String): Option[JsonObject] = {
-    val response =resmiProvider(GET).resource("sosms:Route", new ResourceId(to), RequestParameters.emptyParameters(), Optional.empty())
+    val response =resmiProvider(GET).resource("sosms:InternalRoute", new ResourceId(to), RequestParameters.emptyParameters(), Optional.empty())
     response.getStatus match {
       case 404 => None
       case 200 => Some(response.getEntity.asInstanceOf[JsonObject])
